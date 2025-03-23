@@ -530,6 +530,97 @@ class FTPTarget(_Target):
             if entry:
                 entry_map[name] = entry
                 entry_list.append(entry)
+            
+        # Calls `_addline`.
+        def _addline_listWrapper(status, line):
+            print("line:", line)
+            # import code
+            # code.interact(local=locals())
+
+            # Example input line (from ls -la, vsftpd):
+            # drwxr-sr-x    1 1014     1000        20560 Mar 23 16:27 foo
+            #
+            # Split the line into its whitespace-delimited parts.
+            # Note: the filename may contain spaces so we join all tokens past the 8th.
+            parts = line.split()
+            if len(parts) < 9:
+                #write_error(f"Invalid LIST line: {line}")
+                raise RuntimeError(
+                    f"Invalid LIST line: {line}"
+                )
+                return
+
+            # Extract the known fields.
+            permissions = parts[0]
+            # parts[1] is link count (ignored), parts[2] is owner, parts[3] is group.
+            try:
+                size = int(parts[4])
+            except ValueError:
+                #write_error(f"Invalid size in LIST line: {line}")
+                raise RuntimeError(
+                    f"Invalid size in LIST line: {line}"
+                )
+                return
+
+            month = parts[5]
+            day = parts[6]
+            time_or_year = parts[7]
+            # Filename may contain spaces, so join the rest of the tokens.
+            filename = " ".join(parts[8:])
+
+            # Determine the type based on the permissions:
+            # 'd' means directory, '-' means file.
+            if permissions[0] == 'd':
+                res_type = "dir"
+            else:
+                res_type = "file"
+
+            # Determine the modify timestamp.
+            # If time_or_year contains a colon, it's in the form HH:MM (implying current year).
+            # Otherwise, it's a year (for older files, with time assumed to be 00:00).
+            import time, calendar, datetime
+            if ":" in time_or_year:
+                year = datetime.datetime.now().year
+                # Build a string like "Mar 23 2025 16:27" and parse it.
+                time_str = f"{month} {day} {year} {time_or_year}"
+                try:
+                    struct_time = time.strptime(time_str, "%b %d %Y %H:%M")
+                except Exception as e:
+                    write_error(f"Time parse error for line: {line} -> {e}")
+                    return
+            else:
+                # Here time_or_year is actually the year.
+                try:
+                    year = int(time_or_year)
+                except ValueError:
+                    #write_error(f"Invalid year in LIST line: {line}")
+                    raise RuntimeError(
+                        f"Invalid year in LIST line: {line}"
+                    )
+                    return
+                # For older files, we assume time as 00:00.
+                time_str = f"{month} {day} {year} 00:00"
+                try:
+                    struct_time = time.strptime(time_str, "%b %d %Y %H:%M")
+                except Exception as e:
+                    #write_error(f"Time parse error for line: {line} -> {e}")
+                    raise RuntimeError(
+                        f"Time parse error for line: {line} -> {e}"
+                    )
+                    return
+
+            # Format the modification time in the MLSD expected format: YYYYMMDDHHMMSS.
+            modify = time.strftime("%Y%m%d%H%M%S", struct_time)
+
+            # Build the MLSD fact string.
+            # According to RFC 3659, the facts are in "fact=value;" format.
+            facts = f"size={size};modify={modify};type={res_type};"
+            # Concatenate facts and filename separated by "; " (as _addline expects).
+            mlsd_line = f"{facts} {filename}"
+            print("new line:", mlsd_line)
+            # Call _addline with the new MLSD line.
+            _addline(status, mlsd_line)
+            
 
         try:
             # We use a custom wrapper here, so we can implement a codding fall back:
@@ -539,10 +630,14 @@ class FTPTarget(_Target):
             # write_error("The FTP server responded with {}".format(e))
             # raises error_perm "500 Unknown command" if command is not supported
             if "500" in str(e.args):
-                raise RuntimeError(
-                    "The FTP server does not support the 'MLSD' command."
-                )
-            raise
+                # raise RuntimeError(
+                #     "The FTP server does not support the 'MLSD' command."
+                # )
+                
+                # Try `LIST` command:
+                self._ftp_retrlines_native("LIST", _addline_listWrapper, encoding)
+            else:
+                raise
 
         # load stored meta data if present
         self.cur_dir_meta = DirMetadata(self)
