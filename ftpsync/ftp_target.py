@@ -729,8 +729,10 @@ class FTPTarget(_Target):
         # print("FTP write_file({})".format(name), blocksize)
         assert is_native(name)
         self.check_write(name)
-        self.ftp.storbinary(f"STOR {name}", fp_src, blocksize, callback)
-        # TODO: check result
+        response_code = self.ftp.storbinary(f"STOR {name}", fp_src, blocksize, callback)
+        # Check result:
+        if response_code != '226 Transfer complete.':
+            raise Exception(f"Unexpected response code while uploading to {name}: {response_code}")
 
     def copy_to_file(self, name, fp_dest, callback=None):
         """Write cur_dir/name to file-like `fp_dest`.
@@ -749,7 +751,10 @@ class FTPTarget(_Target):
             if callback:
                 callback(data)
 
-        self.ftp.retrbinary(f"RETR {name}", _write_to_file, FTPTarget.DEFAULT_BLOCKSIZE)
+        response_code = self.ftp.retrbinary(f"RETR {name}", _write_to_file, FTPTarget.DEFAULT_BLOCKSIZE)
+        # Check result:
+        if response_code != '226 Transfer complete.':
+            raise Exception(f"Unexpected response code while downloading to {name}: {response_code}")
 
     def remove_file(self, name):
         """Remove cur_dir/name."""
