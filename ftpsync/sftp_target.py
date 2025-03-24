@@ -511,12 +511,13 @@ class SFTPTarget(_Target):
         out.seek(0)
         return out
 
-    def write_file(self, name, fp_src, blocksize=DEFAULT_BLOCKSIZE, callback=None):
+    def write_file(self, name, fp_src, mtime=None, blocksize=DEFAULT_BLOCKSIZE, callback=None):
         """Write file-like `fp_src` to cur_dir/name.
 
         Args:
             name (str): file name, located in self.curdir
             fp_src (file-like): must support read() method
+            mtime (str, optional): the file's modification timestamp in 'YYYYMMDDHHMMSS' format.
             blocksize (int, optional):
             callback (function, optional):
                 Called like `func(buf)` for every written chunk
@@ -526,6 +527,7 @@ class SFTPTarget(_Target):
         self.check_write(name)
         self.sftp.putfo(fp_src, name)  # , callback)
         # TODO: check result
+        # TODO: use `mtime`
 
     def copy_to_file(self, name, fp_dest, callback=None):
         """Write cur_dir/name to file-like `fp_dest`.

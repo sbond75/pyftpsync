@@ -111,6 +111,10 @@ class BaseSynchronizer:
         #: str: Conflict resolution strategy
         self.resolve_all = None
 
+        #: Maximum allowed difference between a reported mtime and the last known update time,
+        #: before we classify the entry as 'modified externally'
+        self.mtime_compare_eps = FileEntry.EPS_TIME
+
         self._stats = {
             "bytes_written": 0,
             "conflict_files": 0,
@@ -315,7 +319,7 @@ class BaseSynchronizer:
                 raise
 
             with reader as fp_src:
-                dest.write_file(file_entry.name, fp_src, callback=__block_written)
+                dest.write_file(file_entry.name, fp_src, file_entry.mtime_str(), callback=__block_written)
 
         dest.set_mtime(file_entry.name, file_entry.mtime, file_entry.size)
         dest.set_sync_info(file_entry.name, file_entry.mtime, file_entry.size)
@@ -927,7 +931,7 @@ class BiDirSynchronizer(BaseSynchronizer):
         elif c_pair == ("existing", "existing"):
             # Naive classification derived from file time and size
             time_cmp = eps_compare(
-                pair.local.mtime, pair.remote.mtime, FileEntry.EPS_TIME
+                pair.local.mtime, pair.remote.mtime, self.mtime_compare_eps
             )
             if time_cmp < 0:
                 c_pair = ("unmodified", "modified")  # remote is newer
@@ -941,7 +945,7 @@ class BiDirSynchronizer(BaseSynchronizer):
         elif c_pair == ("new", "new"):
             # Naive classification derived from file time and size
             time_cmp = eps_compare(
-                pair.local.mtime, pair.remote.mtime, FileEntry.EPS_TIME
+                pair.local.mtime, pair.remote.mtime, self.mtime_compare_eps
             )
             if time_cmp == 0 and pair.local.size == pair.remote.size:
                 c_pair = ("unmodified", "unmodified")  # equal

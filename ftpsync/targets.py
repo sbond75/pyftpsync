@@ -380,14 +380,14 @@ class _Target:
         """
         raise NotImplementedError
 
-    def write_file(self, name, fp_src, blocksize=DEFAULT_BLOCKSIZE, callback=None):
+    def write_file(self, name, fp_src, mtime=None, blocksize=DEFAULT_BLOCKSIZE, callback=None):
         """Write binary data from file-like to cur_dir/name."""
         raise NotImplementedError
 
-    def write_text(self, name, s):
+    def write_text(self, name, s, mtime=None):
         """Write string data to cur_dir/name using write_file()."""
         buf = io.BytesIO(to_bytes(s))
-        self.write_file(name, buf)
+        self.write_file(name, buf, mtime)
 
     def remove_file(self, name):
         """Remove cur_dir/name."""

@@ -9,6 +9,7 @@ import ftplib
 import json
 import os
 import time
+import datetime
 from posixpath import join as join_url
 from posixpath import normpath as normpath_url
 from posixpath import relpath as relpath_url
@@ -26,6 +27,19 @@ from ftpsync.util import (
     write,
     write_error,
 )
+
+
+def set_mdtm(ftp, filename, timestamp):
+    """
+    Sets the modification time of a file on the FTP server.
+
+    :param ftp: An active ftplib.FTP connection.
+    :param filename: The filename on the server.
+    :param timestamp: The timestamp in 'YYYYMMDDHHMMSS' format.
+    """
+    cmd = f"MDTM {timestamp} {filename}"
+    response = ftp.sendcmd(cmd)
+    return response # if successful in vsftpd, this is '213 File modification time set.'  # Should return a success response if supported
 
 
 # ===============================================================================
@@ -575,21 +589,47 @@ class FTPTarget(_Target):
             else:
                 res_type = "file"
 
+            # Get the current date.
+            now = datetime.datetime.now()
+            current_year = now.year
+            current_month = now.month
+
+            # Convert month abbreviation to a number (e.g., "Mar" -> 3).
+            try:
+                month_number = time.strptime(month, "%b").tm_mon
+            except ValueError:
+                #write_error(f"Invalid month in LIST line: {line}")
+                raise RuntimeError(
+                    f"Invalid month in LIST line: {line}"
+                )
+                return
+
             # Determine the modify timestamp.
             # If time_or_year contains a colon, it's in the form HH:MM (implying current year).
             # Otherwise, it's a year (for older files, with time assumed to be 00:00).
-            import time, calendar, datetime
             if ":" in time_or_year:
-                year = datetime.datetime.now().year
-                # Build a string like "Mar 23 2025 16:27" and parse it.
+                # year = datetime.datetime.now().year
+                # # Build a string like "Mar 23 2025 16:27" and parse it.
+                # time_str = f"{month} {day} {year} {time_or_year}"
+                # try:
+                #     struct_time = time.strptime(time_str, "%b %d %Y %H:%M")
+                # except Exception as e:
+                #     #write_error(f"Time parse error for line: {line} -> {e}")
+                #     raise RuntimeError(
+                #         f"Time parse error for line: {line} -> {e}"
+                #     )
+                #     return
+
+                # The year is implied; determine it based on the current month.
+                if month_number > current_month:
+                    year = current_year - 1  # If the month is in the future, assume last year.
+                else:
+                    year = current_year
                 time_str = f"{month} {day} {year} {time_or_year}"
-                try:
-                    struct_time = time.strptime(time_str, "%b %d %Y %H:%M")
-                except Exception as e:
-                    write_error(f"Time parse error for line: {line} -> {e}")
-                    return
+                time_format = "%b %d %Y %H:%M"
             else:
                 # Here time_or_year is actually the year.
+                # The year is explicitly given.
                 try:
                     year = int(time_or_year)
                 except ValueError:
@@ -598,16 +638,29 @@ class FTPTarget(_Target):
                         f"Invalid year in LIST line: {line}"
                     )
                     return
-                # For older files, we assume time as 00:00.
                 time_str = f"{month} {day} {year} 00:00"
-                try:
-                    struct_time = time.strptime(time_str, "%b %d %Y %H:%M")
-                except Exception as e:
-                    #write_error(f"Time parse error for line: {line} -> {e}")
-                    raise RuntimeError(
-                        f"Time parse error for line: {line} -> {e}"
-                    )
-                    return
+                time_format = "%b %d %Y %H:%M"
+
+                # # For older files, we assume time as 00:00.
+                # time_str = f"{month} {day} {year} 00:00"
+                # try:
+                #     struct_time = time.strptime(time_str, "%b %d %Y %H:%M")
+                # except Exception as e:
+                #     #write_error(f"Time parse error for line: {line} -> {e}")
+                #     raise RuntimeError(
+                #         f"Time parse error for line: {line} -> {e}"
+                #     )
+                #     return
+
+            # Parse the time string.
+            try:
+                struct_time = time.strptime(time_str, time_format)
+            except Exception as e:
+                #write_error(f"Time parse error for line: {line} -> {e}")
+                raise RuntimeError(
+                    f"Time parse error for line: {line} -> {e}"
+                )
+                return
 
             # Format the modification time in the MLSD expected format: YYYYMMDDHHMMSS.
             modify = time.strftime("%Y%m%d%H%M%S", struct_time)
@@ -618,6 +671,9 @@ class FTPTarget(_Target):
             # Concatenate facts and filename separated by "; " (as _addline expects).
             mlsd_line = f"{facts} {filename}"
             print("new line:", mlsd_line)
+            # Change the timestamp resolution since this `LIST` command in vsftpd only gets 00 as seconds, unlike `MLSD`.
+            self.mtime_compare_eps = 60.01
+            self.synchronizer.mtime_compare_eps = self.mtime_compare_eps
             # Call _addline with the new MLSD line.
             _addline(status, mlsd_line)
             
@@ -716,12 +772,13 @@ class FTPTarget(_Target):
         out.seek(0)
         return out
 
-    def write_file(self, name, fp_src, blocksize=DEFAULT_BLOCKSIZE, callback=None):
+    def write_file(self, name, fp_src, mtime=None, blocksize=DEFAULT_BLOCKSIZE, callback=None):
         """Write file-like `fp_src` to cur_dir/name.
 
         Args:
             name (str): file name, located in self.curdir
             fp_src (file-like): must support read() method
+            mtime (str, optional): the file's modification timestamp in 'YYYYMMDDHHMMSS' format.
             blocksize (int, optional):
             callback (function, optional):
                 Called like `func(buf)` for every written chunk
@@ -733,6 +790,15 @@ class FTPTarget(_Target):
         # Check result:
         if response_code != '226 Transfer complete.':
             raise Exception(f"Unexpected response code while uploading to {name}: {response_code}")
+
+        if mtime is not None:
+            # Set mtime if supported:
+            import pdb
+            pdb.set_trace()
+            response_code = set_mdtm(self.ftp, name, mtime)
+            if response_code != '213 File modification time set.':
+                # Not supported
+                print("Setting modification time with MDTM is not supported")
 
     def copy_to_file(self, name, fp_dest, callback=None):
         """Write cur_dir/name to file-like `fp_dest`.

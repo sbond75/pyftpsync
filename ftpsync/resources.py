@@ -5,6 +5,7 @@ Licensed under the MIT license: https://www.opensource.org/licenses/mit-license.
 
 import os
 from datetime import datetime
+import time
 from posixpath import join as join_url
 from posixpath import normpath as normpath_url
 from posixpath import relpath as relpath_url
@@ -387,6 +388,10 @@ class FileEntry(_Resource):
         if self.mtime > info["m"]:
             return True
         return False
+
+    def mtime_str(self):
+        #return time.strftime("%Y%m%d%H%M%S", time.gmtime(self.mtime)) + ".000000"  # Adding microseconds if needed
+        return time.strftime("%Y%m%d%H%M%S", time.gmtime(self.mtime)) # `self.mtime` is timestamp since epoch (i.e. as returned by `datetime.now().timestamp()`)
 
 
 # ===============================================================================
